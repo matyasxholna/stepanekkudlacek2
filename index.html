@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GROGAME</title>
+    <style>
+        * {
+            padding: 0;
+            margin: 0;
+            box-sizing: border-box;
+            image-rendering: pixelated;
+        }
+        body {
+            background-color: #05050a;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            flex-direction: column;
+            color: #fff;
+            overflow: hidden;
+            cursor: pointer;
+            position: relative;
+        }
+        /* Upravený styl pro název hry: posunuto ještě výše */
+        .grogame-title {
+            color: #8ed19b;
+            font-size: 5rem;
+            font-weight: bold;
+            margin-top: -120px; /* Změněno na -120px pro posun ještě výše */
+            margin-bottom: 5px;
+            text-shadow: 3px 3px #000;
+            letter-spacing: 5px;
+        }
+        h1 {
+            margin-bottom: 15px;
+            font-size: 1.1rem;
+            text-align: center;
+            text-shadow: 2px 2px #000;
+            color: #fff;
+        }
+        #gameCanvas {
+            background-color: #000000;
+            border: 4px solid #333;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+        }
+        #scoreBoard {
+            margin-top: 10px;
+            font-size: 1.2rem;
+            font-weight: bold;
+        }
+        .current-score {
+            color: #87ceeb;
+        }
+        .high-score-text {
+            color: #8ed19b;
+        }
+        .credits {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 0.9rem;
+            color: #ffffff;
+            text-align: center;
+            text-shadow: 1px 1px #000;
+            opacity: 0.7;
+            letter-spacing: 1px;
+            line-height: 1.4;
+            white-space: nowrap;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="grogame-title">GROGAME</div>
+    <h1>A / D = Pohyb | MEZERNÍK / W = Skok</h1>
+    
+    <audio id="bgMusic" src="music.mp3" loop preload="auto"></audio>
+    <canvas id="gameCanvas" width="500" height="600"></canvas>
+    
+    <div id="scoreBoard">
+        <span class="current-score">Skóre: <span id="score">0</span></span> 
+        | 
+        <span class="high-score-text">Nejvyšší skóre: <span id="highScore">0</span></span>
+    </div>
+
+    <div class="credits">
+        vytvořili: D. Štěpánek a T. Kudláček v roce 2026<br>
+        použitá hudba: 8 Bit Universe - The Mandalorian Theme [8 Bit Tribute to Ludwig Göransson] - 2020<br>
+        Tato fanouškovská hra je určena výhradně pro nekomerční účely a zábavu.
+    </div>
+
+    <script>
+        // (JavaScript zůstává beze změny)
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+        const scoreDisplay = document.getElementById("score");
+        const highScoreDisplay = document.getElementById("highScore");
+
+        let audioCtx = null;
+
+        const GRAVITY = 0.4;
+        const JUMP_FORCE = -11;
+        const PLAYER_SPEED = 5;
+
+        let player = {
+            x: 235,
+            y: 450,
+            width: 30,
+            height: 40,
+            velY: 0,
+            velX: 0,
+            isJumping: false
+        };
+
+        let tieFighter = {
+            x: -100, y: 0, width: 40, height: 40, speed: 5, direction: 1, active: false
+        };
+
+        let bigTieFighter = {
+            x: -200, y: 0, width: 120, height: 120, speed: 2.5, direction: 1, active: false
+        };
+
+        let platforms = [];
+        let stars = [];
+        let score = 0;
+        let highScore = 0;
+        let gameOver = false;
+        let keys = {};
+        let musicStarted = false;
+
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx && audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        function startBackgroundMusic() {
+            if (musicStarted) return;
+            const audio = document.getElementById("bgMusic");
+            audio.volume = 0.45;
+            audio.play().catch(() => {});
+            musicStarted = true;
+        }
+
+        window.addEventListener("click", () => {
+            initAudio();
+            startBackgroundMusic();
+        });
+
+        function createNoiseBuffer() {
+            if (!audioCtx) return null;
+            let bufferSize = audioCtx.sampleRate * 3; 
+            let buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+            let data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) {
+                data[i] = Math.random() * 2 - 1;
+            }
+            return buffer;
+        }
+
+        function playTieSound(volumeMultiplier, pitchShift, isBig) {
+            initAudio();
+            if (!audioCtx || audioCtx.state === 'suspended') return;
+            const now = audioCtx.currentTime;
+            const duration = isBig ? 3.0 : 1.5; 
+            const peakTime = isBig ? 0.9 : 0.45; 
+
+            let osc = audioCtx.createOscillator();
+            let oscGain = audioCtx.createGain();
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(650 * pitchShift, now);
+            osc.frequency.exponentialRampToValueAtTime(120 * pitchShift, now + peakTime);
+            osc.frequency.linearRampToValueAtTime(70 * pitchShift, now + duration);
+
+            let lfo = audioCtx.createOscillator();
+            let lfoGain = audioCtx.createGain();
+            lfo.type = 'sawtooth'; lfo.frequency.value = 45; lfoGain.gain.value = 80;
+            lfo.connect(lfoGain); lfoGain.connect(osc.frequency);
+
+            oscGain.gain.setValueAtTime(0, now);
+            oscGain.gain.linearRampToValueAtTime(0.1 * volumeMultiplier, now + (peakTime * 0.4)); 
+            oscGain.gain.linearRampToValueAtTime(0.06 * volumeMultiplier, now + (peakTime * 1.3));
+            oscGain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+            let noiseBuffer = createNoiseBuffer();
+            if (noiseBuffer) {
+                let noise = audioCtx.createBufferSource();
+                noise.buffer = noiseBuffer;
+                let noiseFilter = audioCtx.createBiquadFilter();
+                let noiseGain = audioCtx.createGain();
+                noiseFilter.type = 'bandpass'; noiseFilter.Q.value = 4;
+                noiseFilter.frequency.setValueAtTime(1200 * pitchShift, now);
+                noiseFilter.frequency.exponentialRampToValueAtTime(300 * pitchShift, now + peakTime);
+                noiseFilter.frequency.linearRampToValueAtTime(100 * pitchShift, now + duration);
+                noiseGain.gain.setValueAtTime(0, now);
+                noiseGain.gain.linearRampToValueAtTime(0.08 * volumeMultiplier, now + (peakTime * 0.5));
+                noiseGain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+                noise.connect(noiseFilter); noiseFilter.connect(noiseGain);
+                let masterFilter = audioCtx.createBiquadFilter();
+                masterFilter.type = 'lowpass'; masterFilter.frequency.setValueAtTime(2000, now);
+                masterFilter.frequency.linearRampToValueAtTime(500, now + duration);
+                osc.connect(oscGain); oscGain.connect(masterFilter); noiseGain.connect(masterFilter); masterFilter.connect(audioCtx.destination);
+                lfo.start(now); osc.start(now); noise.start(now);
+                lfo.stop(now + duration); osc.stop(now + duration); noise.stop(now + duration);
+            }
+        }
+
+        function playGroguJumpSound() {
+            initAudio();
+            if (!audioCtx || audioCtx.state === 'suspended') return;
+            const now = audioCtx.currentTime;
+            const duration = 0.22; 
+            let osc1 = audioCtx.createOscillator(); let osc2 = audioCtx.createOscillator();
+            let gainNode = audioCtx.createGain();
+            osc1.type = 'sine'; osc2.type = 'triangle';
+            let baseFreq = 920 + Math.random() * 60; 
+            osc1.frequency.setValueAtTime(baseFreq, now);
+            osc1.frequency.linearRampToValueAtTime(baseFreq - 400, now + 0.05);
+            osc1.frequency.exponentialRampToValueAtTime(baseFreq - 150, now + duration);
+            osc2.frequency.setValueAtTime(baseFreq, now);
+            osc2.frequency.linearRampToValueAtTime(baseFreq - 400, now + 0.05);
+            osc2.frequency.exponentialRampToValueAtTime(baseFreq - 150, now + duration);
+            let vibrato = audioCtx.createOscillator(); let vibratoGain = audioCtx.createGain();
+            vibrato.frequency.setValueAtTime(35, now); vibratoGain.gain.setValueAtTime(25, now);
+            vibrato.connect(vibratoGain); vibratoGain.connect(osc1.frequency); vibratoGain.connect(osc2.frequency);
+            gainNode.gain.setValueAtTime(0, now); gainNode.gain.linearRampToValueAtTime(0.22, now + 0.02); 
+            gainNode.gain.linearRampToValueAtTime(0.14, now + 0.08); gainNode.gain.exponentialRampToValueAtTime(0.001, now + duration);
+            let formantFilter = audioCtx.createBiquadFilter();
+            formantFilter.type = 'bandpass'; formantFilter.Q.value = 2.5; formantFilter.frequency.setValueAtTime(1500, now);
+            osc1.connect(gainNode); osc2.connect(gainNode); gainNode.connect(formantFilter); formantFilter.connect(audioCtx.destination);
+            vibrato.start(now); osc1.start(now); osc2.start(now);
+            vibrato.stop(now + duration); osc1.stop(now + duration); osc2.stop(now + duration);
+        }
+
+        function initStars() {
+            stars = [];
+            for (let i = 0; i < 60; i++) stars.push({ x: Math.random() * canvas.width, y: Math.random() * canvas.height, size: Math.random() * 2 });
+        }
+
+        function generatePlatforms() {
+            platforms = []; platforms.push({ x: 0, y: canvas.height - 30, width: canvas.width, height: 15 });
+            for (let i = 1; i < 6; i++) {
+                let width = Math.random() * (180 - 100) + 100;
+                let x = Math.random() * (canvas.width - width);
+                let y = canvas.height - (i * 110);
+                platforms.push({ x, y, width, height: 15 });
+            }
+        }
+
+        function restartGame() {
+            player.x = canvas.width / 2 - 15; player.y = canvas.height - 100; player.velY = 0; player.velX = 0; player.isJumping = false;
+            score = 0; gameOver = false; scoreDisplay.innerText = "0";
+            tieFighter.active = false; tieFighter.x = -100; bigTieFighter.active = false; bigTieFighter.x = -200;
+            initStars(); generatePlatforms();
+        }
+
+        window.addEventListener("keydown", (e) => {
+            keys[e.code] = true; initAudio(); startBackgroundMusic();
+            if (e.code === "Space" || e.code === "KeyW") {
+                e.preventDefault(); 
+                if (!gameOver) { if (!player.isJumping) { player.velY = JUMP_FORCE; player.isJumping = true; playGroguJumpSound(); } } else { restartGame(); }
+            }
+        });
+        window.addEventListener("keyup", (e) => { keys[e.code] = false; });
+
+        function update() {
+            if (gameOver) return;
+            if (keys["KeyA"] || keys["ArrowLeft"]) player.velX = -PLAYER_SPEED; else if (keys["KeyD"] || keys["ArrowRight"]) player.velX = PLAYER_SPEED; else player.velX = 0;
+            player.x += player.velX;
+            if (player.x < -player.width) player.x = canvas.width; if (player.x > canvas.width) player.x = -player.width;
+            player.velY += GRAVITY; player.y += player.velY;
+            if (player.velY > 0) {
+                platforms.forEach(plat => {
+                    if (player.x + player.width > plat.x && player.x < plat.x + plat.width && player.y + player.height >= plat.y && player.y + player.height <= plat.y + plat.height + player.velY) {
+                        player.y = plat.y - player.height; player.velY = 0; player.isJumping = false;
+                    }
+                });
+            }
+            if (!tieFighter.active && !bigTieFighter.active) {
+                if (Math.random() < 0.003) { tieFighter.active = true; tieFighter.y = Math.random() * (canvas.height - 300) + 50; tieFighter.direction = Math.random() < 0.5 ? 1 : -1; tieFighter.x = tieFighter.direction === 1 ? -tieFighter.width : canvas.width; playTieSound(1.0, 1.0, false); }
+            } else if (tieFighter.active) { tieFighter.x += tieFighter.speed * tieFighter.direction; if ((tieFighter.direction === 1 && tieFighter.x > canvas.width) || (tieFighter.direction === -1 && tieFighter.x < -tieFighter.width)) tieFighter.active = false; }
+            if (!bigTieFighter.active && !tieFighter.active) {
+                if (Math.random() < 0.0015) { bigTieFighter.active = true; bigTieFighter.y = Math.random() * (canvas.height - 350) + 50; bigTieFighter.direction = Math.random() < 0.5 ? 1 : -1; bigTieFighter.x = bigTieFighter.direction === 1 ? -bigTieFighter.width : canvas.width; playTieSound(3.0, 0.7, true); }
+            } else if (bigTieFighter.active) {
+                bigTieFighter.x += bigTieFighter.speed * bigTieFighter.direction;
+                let p = 15; if (player.x + player.width > bigTieFighter.x + p && player.x < bigTieFighter.x + bigTieFighter.width - p && player.y + player.height > bigTieFighter.y + p && player.y < bigTieFighter.y + bigTieFighter.height - p) { gameOver = true; if (score > highScore) { highScore = score; highScoreDisplay.innerText = highScore; } }
+                if ((bigTieFighter.direction === 1 && bigTieFighter.x > canvas.width) || (bigTieFighter.direction === -1 && bigTieFighter.x < -bigTieFighter.width)) bigTieFighter.active = false;
+            }
+            if (player.y < canvas.height / 2) {
+                let s = canvas.height / 2 - player.y; player.y = canvas.height / 2; score += Math.floor(s / 2); scoreDisplay.innerText = score;
+                platforms.forEach(plat => plat.y += s); if (tieFighter.active) tieFighter.y += s; if (bigTieFighter.active) bigTieFighter.y += s;
+                stars.forEach(star => { star.y += s * 0.4; if (star.y > canvas.height) { star.y = 0; star.x = Math.random() * canvas.width; } });
+            }
+            platforms = platforms.filter(plat => plat.y < canvas.height);
+            while (platforms.length < 6) { let h = Math.min(...platforms.map(p => p.y)); let w = Math.random() * (160 - 90) + 90; let x = Math.random() * (canvas.width - w); platforms.push({ x, y: h - 110, width: w, height: 15 }); }
+            if (player.y > canvas.height) { gameOver = true; if (score > highScore) { highScore = score; highScoreDisplay.innerText = highScore; } }
+        }
+
+        function draw() {
+            ctx.fillStyle = "#000000"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = "#ffffff"; stars.forEach(star => ctx.fillRect(star.x, star.y, star.size, star.size));
+            if (tieFighter.active && !gameOver) {
+                ctx.fillStyle = "#cccccc"; ctx.fillRect(tieFighter.x + 14, tieFighter.y + 14, 12, 12);
+                ctx.fillStyle = "#333333"; ctx.fillRect(tieFighter.x + 18, tieFighter.y + 17, 4, 4);
+                ctx.fillStyle = "#999999"; ctx.fillRect(tieFighter.x + 4, tieFighter.y + 18, 10, 4); ctx.fillRect(tieFighter.x + 26, tieFighter.y + 18, 10, 4);
+                ctx.fillStyle = "#111111"; ctx.fillRect(tieFighter.x, tieFighter.y + 2, 5, 36); ctx.fillRect(tieFighter.x + 35, tieFighter.y + 2, 5, 36);
+                ctx.fillStyle = "#cccccc"; ctx.fillRect(tieFighter.x, tieFighter.y, 5, 2); ctx.fillRect(tieFighter.x, tieFighter.y + 38, 5, 2); ctx.fillRect(tieFighter.x + 35, tieFighter.y, 5, 2); ctx.fillRect(tieFighter.x + 35, tieFighter.y + 38, 5, 2);
+            }
+            ctx.fillStyle = "#dc143c"; platforms.forEach(plat => ctx.fillRect(plat.x, plat.y, plat.width, plat.height));
+            if (!gameOver) {
+                ctx.fillStyle = "#dfc49f"; ctx.fillRect(player.x, player.y + 15, player.width, player.height - 15);
+                ctx.fillStyle = "#8ed19b"; ctx.fillRect(player.x + 5, player.y, player.width - 10, 15); ctx.fillRect(player.x - 5, player.y + 2, 7, 5); ctx.fillRect(player.x + player.width - 2, player.y + 2, 7, 5);
+                ctx.fillStyle = "#000000"; ctx.fillRect(player.x + 8, player.y + 4, 3, 3); ctx.fillRect(player.x + player.width - 11, player.y + 4, 3, 3);
+            }
+            if (bigTieFighter.active && !gameOver) {
+                ctx.fillStyle = "#cccccc"; ctx.fillRect(bigTieFighter.x + 42, bigTieFighter.y + 42, 36, 36);
+                ctx.fillStyle = "#333333"; ctx.fillRect(bigTieFighter.x + 54, bigTieFighter.y + 51, 12, 12);
+                ctx.fillStyle = "#999999"; ctx.fillRect(bigTieFighter.x + 12, bigTieFighter.y + 54, 30, 12); ctx.fillRect(bigTieFighter.x + 78, bigTieFighter.y + 54, 30, 12);
+                ctx.fillStyle = "#111111"; ctx.fillRect(bigTieFighter.x, bigTieFighter.y + 6, 15, 108); ctx.fillRect(bigTieFighter.x + 105, bigTieFighter.y + 6, 15, 108);
+                ctx.fillStyle = "#cccccc"; ctx.fillRect(bigTieFighter.x, bigTieFighter.y, 15, 6); ctx.fillRect(bigTieFighter.x, bigTieFighter.y + 114, 15, 6); ctx.fillRect(bigTieFighter.x + 105, bigTieFighter.y, 15, 6); ctx.fillRect(bigTieFighter.x + 105, bigTieFighter.y + 114, 15, 6);
+            }
+            if (gameOver) { ctx.fillStyle = "rgba(0, 0, 0, 0.8)"; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.fillStyle = "#ff4a4a"; ctx.font = "bold 34px Courier New"; ctx.textAlign = "center"; ctx.fillText("KONEC HRY", canvas.width / 2, canvas.height / 2 - 30); ctx.fillStyle = "#ffffff"; ctx.font = "18px Courier New"; ctx.fillText("Stiskni MEZERNÍK pro restart", canvas.width / 2, canvas.height / 2 + 20); }
+        }
+
+        function gameLoop() { update(); draw(); requestAnimationFrame(gameLoop); }
+        restartGame(); gameLoop();
+    </script>
+</body>
+</html>
